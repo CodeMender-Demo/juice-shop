@@ -151,9 +151,13 @@ jobs:
           cat ~/.codemender/config.yaml
       - name: Find
         run: |
-            cm find ./${{ matrix.path }} --deep --deep-workers 8
-            # Write a json report
-            cm report --format json > codemender_report.json
+          RAW_PATH='${{ matrix.path }}'
+          # The #\" syntax strips a leading double quote
+          CLEAN_PATH="${RAW_PATH#\"}"
+          echo "Cleaned path: $CLEAN_PATH"
+          cm find ./${{ matrix.path }} --deep --deep-workers 8
+          # Write a json report
+          cm report --format json > codemender_report.json
       - name: Verify Exploitability and Generate Remediation PRs
         env:
           GH_TOKEN: ${{ github.token }}
