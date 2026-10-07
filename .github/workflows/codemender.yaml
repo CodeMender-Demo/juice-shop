@@ -5,7 +5,7 @@ on:
 
 jobs:
   prepare-matrix:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
@@ -28,8 +28,9 @@ jobs:
 
   process-chunk:
     needs: prepare-matrix
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     strategy:
+      max-parallel: 3
       fail-fast: false
       matrix: ${{ fromJSON(needs.prepare-matrix.outputs.matrix) }}
     name: "Chunk: ${{ matrix.path }} (${{ matrix.type }}, ${{ matrix.count }} files)"
