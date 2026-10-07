@@ -155,14 +155,15 @@ jobs:
             echo "Chunk has subdirectories. Staging into temporary folder..."
             
             python3 -c '
-            import os, json, pathlib
-            files = json.loads("""${{ toJSON(matrix.files) }}""")
-            stage_dir = pathlib.Path("chunk_stage")
-            
-            for file_path in files:
-                dest = stage_dir / file_path
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                os.link(file_path, dest)'
+          import os, json, pathlib
+          files = json.loads("""${{ toJSON(matrix.files) }}""")
+          stage_dir = pathlib.Path("chunk_stage")
+          
+          for file_path in files:
+              dest = stage_dir / file_path
+              dest.parent.mkdir(parents=True, exist_ok=True)
+              os.link(file_path, dest)
+          '
 
             echo "scan_dir=chunk_stage" >> "$GITHUB_OUTPUT"
           else
