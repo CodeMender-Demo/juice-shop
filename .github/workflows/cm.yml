@@ -72,7 +72,7 @@ jobs:
       fail-fast: false 
       matrix:
         # Pass the dynamic JSON output array from the setup job
-        chunk: ${{ fromJson(needs: setup-chunks.outputs.matrix-chunks) }}
+        chunk: ${{ fromJson(needs.setup-chunks.outputs.matrix-chunks) }}
         
     steps:
       - name: Checkout Code
