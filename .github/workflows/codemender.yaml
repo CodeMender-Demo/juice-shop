@@ -247,15 +247,46 @@ jobs:
           cm report -f md > codemender-audit.md
           cm report -f json > codemender_report.json
 
-      - name: Upload Audit Reports
+      # - name: Upload Audit Reports
+      #   if: always()
+      #   uses: actions/upload-artifact@v4
+      #   with:
+      #     name: codemender-nightly-reports
+      #     path: |
+      #       codemender-audit.html
+      #       codemender-audit.md
+      #       codemender_report.json
+      
+      # Attach the chunk identifier so the aggregator can key it by path
+      - name: Format Chunk Output
         if: always()
+        run: |
+          python3 - << 'EOF'
+          import json, os
+
+          with open("codemender_report.json") as f:
+            chunk_data = json.load(f)
+
+          payload = {
+            "path": "${{ matrix.path }}",
+            "type": "${{ matrix.type }}",
+            "count": ${{ matrix.count }},
+            "data": chunk_data  # your JSON list
+          }
+
+          # Give each file a unique filename so they don't overwrite each other
+          job_idx = "${{ strategy.job-index }}"
+          os.makedirs("chunk-output", exist_ok=True)
+          with open(f"chunk-output/chunk-{job_idx}.json", "w") as f:
+            json.dump(payload, f)
+          EOF
+
+      - name: Upload Chunk Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: codemender-nightly-reports
-          path: |
-            codemender-audit.html
-            codemender-audit.md
-            codemender_report.json
+          name: chunk-result-${{ strategy.job-index }}
+          path: chunk-output/
+          retention-days: 1
       
       - name: Format SARIF Report for GitHub UI
         if: always()
@@ -409,3 +440,84 @@ jobs:
           rm -rf .cm_project
           rm -rf .exploit/
           rm -f gha-creds-*.json
+  
+  aggregate-results:
+    needs: process-chunk
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # Download all artifacts matching the pattern into one directory
+      - name: Download All Chunk Results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: chunk-result-*
+          merge-multiple: true
+          path: all-results/
+
+      - name: Merge Into Single JSON Object
+        run: |
+          python3 - << 'EOF'
+          import glob
+          import json
+          import os
+
+          # Structure 1: Keyed by directory path -> { "src/api": [...], "src/utils": [...] }
+          by_path = {}
+
+          # Structure 2: Consolidated flat list of all items across all chunks
+          all_items = []
+
+          files = glob.glob("all-results/*.json")
+          print(f"Found {len(files)} chunk results to aggregate.")
+
+          for filepath in sorted(files):
+              with open(filepath, "r") as f:
+                  chunk = json.load(f)
+                  path_key = chunk.get("path", "unknown")
+                  chunk_data = chunk.get("data", [])
+
+                  by_path[path_key] = chunk_data
+                  if isinstance(chunk_data, list):
+                      all_items.extend(chunk_data)
+
+          final_object = {
+              "total_chunks": len(by_path),
+              "total_items": len(all_items),
+              "chunks": by_path,         # Keyed by chunk path
+              "all_results": all_items    # Flattened list of all items
+          }
+
+          with open("aggregated_results.json", "w") as f:
+              json.dump(final_object, f, indent=2)
+
+          print("Successfully aggregated results.")
+          EOF
+
+      # Display summary directly on the GitHub Actions Run UI
+      - name: Post Summary to Job Dashboard
+        run: |
+          python3 - << 'EOF'
+          import json, os
+
+          with open("aggregated_results.json") as f:
+              data = json.load(f)
+
+          summary = f"""### Analysis Aggregation Summary
+          - **Total Chunks Processed:** {data['total_chunks']}
+          - **Total Items Collected:** {data['total_items']}
+          """
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
+              f.write(summary)
+          EOF
+
+      # Persist the final combined JSON object
+      - name: Upload Aggregated JSON
+        uses: actions/upload-artifact@v4
+        with:
+          name: aggregated-final-result
+          path: aggregated_results.json
+          retention-days: 14
