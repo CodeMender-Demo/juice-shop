@@ -145,22 +145,42 @@ jobs:
       - name: Print config.yaml
         run: |
           cat ~/.codemender/config.yaml
+      
+      - name: Resolve Scan Target
+        id: target
+        run: |
+          if [ "${{ matrix.has_subdirectories }}" = "true" ]; then
+            echo "Chunk has subdirectories. Staging into temporary folder..."
+            
+            python3 - << 'EOF'
+            import os, json, pathlib
+            files = json.loads('''${{ toJSON(matrix.files) }}''')
+            stage_dir = pathlib.Path("chunk_stage")
+            
+            for file_path in files:
+                dest = stage_dir / file_path
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                os.link(file_path, dest)
+            EOF
+
+            echo "scan_dir=chunk_stage" >> "$GITHUB_OUTPUT"
+          else
+            echo "Chunk is a leaf folder with no subdirectories. Scanning in-place..."
+            echo "scan_dir=${{ matrix.path }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run Recursive Tool
+        run: |
+          echo "Scanning directory: ${{ steps.target.outputs.scan_dir }}"
+          # The tool runs recursively on whichever directory was resolved:
+          my-tool --recursive --dir "${{ steps.target.outputs.scan_dir }}"      
+      
       - name: Find
         run: |
-          RAW_PATH='${{ matrix.path }}'
-          # The #\" syntax strips a leading double quote
-          CLEAN_PATH="${RAW_PATH#\"}"
-          echo "Cleaned path: $CLEAN_PATH"
-          cm find ./${{ matrix.path }}
+          echo "Scanning directory: ${{ steps.target.outputs.scan_dir }}"
+          cm find ./${{ steps.target.outputs.scan_dir }}
           # Write a json report
           cm report --format json > codemender_report.json
-
-      - name: Export Report Artifacts
-        if: always()
-        run: |
-          cm report -f html > codemender-audit.html
-          cm report -f md > codemender-audit.md
-          cm report -f json > codemender_report.json
       
       # Attach the chunk identifier so the aggregator can key it by path
       - name: Format Chunk Output
