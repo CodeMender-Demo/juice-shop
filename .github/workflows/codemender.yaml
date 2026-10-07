@@ -307,8 +307,8 @@ jobs:
           }
 
           for finding in findings:
-              # Filter out un-verified findings
-              if finding.get("status") not in ["VERIFIED", "FIXED"]:
+              # Filter out dismissed findings
+              if finding.get("status") not in ["OPEN"]:
                   continue
 
               rule_id = finding.get("title", "Unknown-Rule")
@@ -444,6 +444,31 @@ jobs:
         with:
           python-version: '3.11'
 
+      # Authenticate to Google Cloud securely
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: "${{ secrets.WIF_PROVIDER }}"
+          service_account: "${{ secrets.WIF_SERVICE_ACCOUNT }}"
+
+      # Download and Install CodeMender On-The-Fly
+      - name: Install CodeMender CLI
+        run: |
+          echo "Downloading CodeMender from Artifact Registry..."
+          gcloud artifacts generic download \
+            --project=cmoc-prod \
+            --location=us \
+            --repository=codemender-cli-production \
+            --package=cm \
+            --version=stable \
+            --name=cm-linux-amd64.zip \
+            --destination=./
+            
+          unzip -q cm-linux-amd64.zip
+          chmod +x cm
+          sudo mv cm /usr/local/bin/cm
+          cm init
+      
       # Download all artifacts matching the pattern into one directory
       - name: Download All Chunk Results
         uses: actions/download-artifact@v4
@@ -508,10 +533,39 @@ jobs:
               f.write(summary)
           EOF
 
+      - name: Aggregate CodeMender Report
+        run: |
+          jq -c '.chunks | to_entries[] | select((.value | length) > 0)' "aggregated_results.json" | while IFS= read -r chunk_entry; do
+            chunk_name=$(echo "$chunk_entry" | jq -r '.key')
+            finding_count=$(echo "$chunk_entry" | jq '.value | length')
+      
+            echo "================================================================================"
+            echo "CHUNK: $chunk_name ($finding_count finding(s))"
+            echo "================================================================================"
+      
+            # Iterate over each finding in the current chunk and echo it
+            echo "$chunk_entry" | jq -c '.value[]' | while IFS= read -r finding; do
+              cat << 'EOF' > finding.json
+              $finding
+              EOF
+
+              cm report import -f finding.json
+              rm finding.json
+            done
+
+            cm report -f md > codemender-report.md >> $GITHUB_STEP_SUMMARY
+
       # Persist the final combined JSON object
       - name: Upload Aggregated JSON
         uses: actions/upload-artifact@v4
         with:
           name: aggregated-final-result
           path: aggregated_results.json
+          retention-days: 14
+
+      - name: Upload Aggregated Markdown Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: codemender-report
+          path: codemender-report.md
           retention-days: 14
