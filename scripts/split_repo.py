@@ -5,7 +5,7 @@ import subprocess
 from collections import defaultdict
 from pathlib import PurePosixPath
 
-MAX_FILES = 50
+MAX_FILES = 25
 
 TARGET_EXTENSIONS = (
     ".py", ".java", ".go", ".js", ".ts", ".c", ".cc", ".cpp", ".h", ".rb", ".php", ".aspx",
