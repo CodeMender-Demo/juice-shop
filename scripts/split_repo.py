@@ -2,58 +2,24 @@
 import json
 import os
 import subprocess
-import sys
 from collections import defaultdict
 from pathlib import PurePosixPath
 
 MAX_FILES = 50
 
-# Target file extensions to include
 TARGET_EXTENSIONS = (
-    ".py",
-    ".java",
-    ".go",
-    ".js",
-    ".ts",
-    ".c",
-    ".cc",
-    ".cpp",
-    ".h",
-    ".rb",
-    ".php",
-    ".aspx",
-    ".cshtml",
-    ".vbhtml",
-    ".vue",
-    ".sql",
-    ".pkh",
-    ".pkb",
-    ".tsql",
-    ".abap",
-    ".acds",
-    ".abdl",
-    ".cls",
-    ".trigger",
-    ".ipynb",
-    ".pl",
-    ".pm",
-    ".sh",
-    ".vb",
-    ".vbp",
-    ".frm",
-    ".bas",
-    ".cls-meta.xml",
-    ".pls",
+    ".py", ".java", ".go", ".js", ".ts", ".c", ".cc", ".cpp", ".h", ".rb", ".php", ".aspx",
+    ".cshtml", ".vbhtml", ".vue", ".sql", ".pkh", ".pkb", ".tsql", ".abap", ".acds", ".abdl",
+    ".cls", ".trigger", ".ipynb", ".pl", ".pm", ".sh", ".vb", ".vbp", ".frm", ".bas",
+    ".cls-meta.xml", ".pls",
 )
 
 
 def is_target_file(file_path: str) -> bool:
-    """Check if the file matches any of the target extensions (case-insensitive)."""
     return file_path.lower().endswith(TARGET_EXTENSIONS)
 
 
 def get_tracked_files() -> list[str]:
-    """Retrieve tracked files using git ls-files and filter by target extensions."""
     result = subprocess.run(
         ["git", "ls-files"],
         stdout=subprocess.PIPE,
@@ -65,14 +31,16 @@ def get_tracked_files() -> list[str]:
     return [f for f in all_files if is_target_file(f)]
 
 
+def dir_has_subdirectories(dir_path: str) -> bool:
+    """Check if the physical directory on disk has any subdirectories (excluding hidden ones)."""
+    try:
+        with os.scandir(dir_path) as entries:
+            return any(e.is_dir() and not e.name.startswith(".") for e in entries)
+    except OSError:
+        return False
+
+
 def build_tree(files: list[str]):
-    """
-    Builds the directory tree structures:
-    - total_counts: recursive count of matching files
-    - direct_files: matching files located directly in each directory
-    - dir_all_files: all matching files under each directory recursively
-    - subdirs: direct child directories of each directory
-    """
     total_counts = defaultdict(int)
     direct_files = defaultdict(list)
     dir_all_files = defaultdict(list)
@@ -83,7 +51,6 @@ def build_tree(files: list[str]):
         direct_dir = str(PurePosixPath(*parts[:-1])) if len(parts) > 1 else "."
         direct_files[direct_dir].append(file_path)
 
-        # Track matching files for all ancestor paths
         for i in range(len(parts)):
             ancestor = str(PurePosixPath(*parts[:i])) if i > 0 else "."
             total_counts[ancestor] += 1
@@ -96,26 +63,24 @@ def build_tree(files: list[str]):
 
 
 def split_tree(curr_dir: str, total_counts, direct_files, dir_all_files, subdirs, max_files: int):
-    """
-    Recursively finds the highest-level directories with <= max_files matching files.
-    Batches loose matching files if a directory exceeds max_files.
-    """
-    # If the directory has 0 matching files, omit it completely
     if total_counts.get(curr_dir, 0) == 0:
         return []
 
-    # If the directory subtree has <= max_files matching files, return as a single chunk
+    has_subdirs = dir_has_subdirectories(curr_dir)
+
+    # If the directory subtree has <= max_files matching files
     if total_counts[curr_dir] <= max_files:
         return [{
             "type": "directory",
             "path": curr_dir,
             "count": total_counts[curr_dir],
+            "has_subdirectories": has_subdirs,
             "files": dir_all_files[curr_dir],
         }]
 
     chunks = []
 
-    # Recurse into child subdirectories containing matching files
+    # Recurse into child subdirectories
     for child in sorted(subdirs.get(curr_dir, [])):
         chunks.extend(split_tree(child, total_counts, direct_files, dir_all_files, subdirs, max_files))
 
@@ -127,6 +92,8 @@ def split_tree(curr_dir: str, total_counts, direct_files, dir_all_files, subdirs
             "type": "files",
             "path": curr_dir,
             "count": len(batch),
+            # Loose files in a parent directory always have sibling subdirectories
+            "has_subdirectories": has_subdirs or (len(batch) < len(loose)),
             "files": batch,
         })
 
