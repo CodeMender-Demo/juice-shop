@@ -1,0 +1,71 @@
+name: Dynamic Monorepo Split and Process
+
+on:
+  workflow_dispatch:
+
+jobs:
+  # Job 1: Find all target files/directories and chunk them into a JSON array
+  setup-chunks:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix-chunks: ${{ steps.set-matrix.outputs.chunks }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Generate Chunks
+        id: set-matrix
+        shell: bash
+        run: |
+          set -euo pipefail
+          
+          TARGET_DIR="tmp_chunks"
+          mkdir -p "$TARGET_DIR"
+          rm -f "$TARGET_DIR"/chunk_*
+          
+          echo "Locating directories containing source code files..."
+          
+          # Find all directories that contain matching source files up to a specific maxdepth
+          # Adjust the extension checks (-name "*.java" -o -name "*.jsp") to fit your language setup
+          DIRS=$(find . -maxdepth 3 -type d \
+            -not -path '*/.*' \
+            -not -path '*/node_modules*' \
+            -not -path '*/venv*' \
+            -not -path "./$TARGET_DIR*" \
+            -exec sh -c 'ls -1 "$1"/*.java "$1"/*.jsp "$1"/*.js "$1"/*.py 2>/dev/null | grep -q .' _ {} \; -print | sort)
+          
+          if [ -z "$DIRS" ]; then
+            echo "No target source directories detected. Defaulting to repository root."
+            DIRS="."
+          fi
+          
+          TOTAL_DIRS=$(echo "$DIRS" | wc -l)
+          echo "Found ${TOTAL_DIRS} unique source directories."
+          
+          # Loop through and map each directory as its own distinct chunk manifest
+          COUNTER=0
+          echo "$DIRS" | while read -r DIR_PATH; do
+            # Format a padded chunk index identifier (e.g., chunk_003)
+            CHUNK_NAME=$(printf "chunk_%03d" "$COUNTER")
+            
+            # Store the directory path string into its designated manifest target file
+            echo "$DIR_PATH" > "$TARGET_DIR/$CHUNK_NAME"
+            COUNTER=$((COUNTER + 1))
+          done
+          
+          # Compile the created manifest file names into a clean, raw JSON array string
+          JSON_ARRAY=$(python3 -c '
+          import os, json
+          chunks = sorted([f for f in os.listdir("tmp_chunks") if f.startswith("chunk_")])
+          print(json.dumps(chunks))
+          ')
+          
+          # Safely hand off the dynamic array block using GitHub Step Multi-line formatting
+          echo "matrix_chunks<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$JSON_ARRAY" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+          
+          # Output statistical feedback maps onto the visible Actions Job Board page
+          echo "### Scan plan summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "* **Total Code Directories Located:** ${TOTAL_DIRS}" >> "$GITHUB_STEP_SUMMARY"
+          echo "* **Parallel Runner Targets Generated:** ${COUNTER}" >> "$GITHUB_STEP_SUMMARY"
