@@ -67,11 +67,13 @@ jobs:
           chmod +x cm
           sudo mv cm /usr/local/bin/cm
           cm init
+
       # Configure Git Identity for the Bot
       - name: Configure Git Identity
         run: |
           git config --global user.name "CodeMender Scan Bot"
           git config --global user.email "codemender-bot@google.com"
+
       # Move the credentials file out of the workspace to protect it from git clean
       - name: Protect Credentials File
         run: |
@@ -161,7 +163,7 @@ jobs:
                 dest = stage_dir / file_path
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 os.link(file_path, dest)
-            EOF
+          EOF
 
             echo "scan_dir=chunk_stage" >> "$GITHUB_OUTPUT"
           else
