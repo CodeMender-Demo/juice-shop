@@ -154,28 +154,21 @@ jobs:
           if [ "${{ matrix.has_subdirectories }}" = "true" ]; then
             echo "Chunk has subdirectories. Staging into temporary folder..."
             
-            python3 - << 'EOF'
+            python3 -c '
             import os, json, pathlib
-            files = json.loads('''${{ toJSON(matrix.files) }}''')
+            files = json.loads("""${{ toJSON(matrix.files) }}""")
             stage_dir = pathlib.Path("chunk_stage")
             
             for file_path in files:
                 dest = stage_dir / file_path
                 dest.parent.mkdir(parents=True, exist_ok=True)
-                os.link(file_path, dest)
-          EOF
+                os.link(file_path, dest)'
 
             echo "scan_dir=chunk_stage" >> "$GITHUB_OUTPUT"
           else
             echo "Chunk is a leaf folder with no subdirectories. Scanning in-place..."
             echo "scan_dir=${{ matrix.path }}" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Run Recursive Tool
-        run: |
-          echo "Scanning directory: ${{ steps.target.outputs.scan_dir }}"
-          # The tool runs recursively on whichever directory was resolved:
-          my-tool --recursive --dir "${{ steps.target.outputs.scan_dir }}"      
+          fi   
       
       - name: Find
         run: |
