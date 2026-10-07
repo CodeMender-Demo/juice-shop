@@ -29,6 +29,11 @@ jobs:
   process-chunk:
     needs: prepare-matrix
     runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+      pull-requests: write
+      id-token: write
+      security-events: write
     strategy:
       max-parallel: 3
       fail-fast: false
