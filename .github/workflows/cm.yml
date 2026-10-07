@@ -1,0 +1,93 @@
+name: Dynamic Monorepo Split and Process
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  # Job 1: Find all target files/directories and chunk them into a JSON array
+  setup-chunks:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix-chunks: ${{ steps.set-matrix.outputs.chunks }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Generate Chunks
+        id: set-matrix
+        shell: bash
+        run: |
+          # 1. Find all target items (e.g., all subdirectories inside a 'packages' folder)
+          # Modify this 'find' command to target the specific files/directories you want to split
+          TARGETS=$(find packages -maxdepth 1 -mindepth 1 -type d | sort)
+          
+          # Convert the newline-separated list into a space-separated array
+          readarray -t TARGET_ARRAY <<< "$TARGETS"
+          
+          # 2. Chunking configuration
+          CHUNK_SIZE=5
+          CHUNK=()
+          ALL_CHUNKS=()
+          
+          # Loop through targets and build chunk batches
+          for item in "${TARGET_ARRAY[@]}"; do
+            if [ -z "$item" ]; then continue; fi
+            CHUNK+=("$item")
+            
+            if [ ${#CHUNK[@]} -eq $CHUNK_SIZE ]; then
+              # Join the array elements into a comma-separated string inside quotes
+              CHUNK_STR=$(printf '"%s",' "${CHUNK[@]}")
+              # Remove trailing comma and wrap in brackets
+              ALL_CHUNKS+=("[${CHUNK_STR%,}]")
+              CHUNK=()
+            fi
+          done
+          
+          # Handle any remaining items in the last chunk
+          if [ ${#CHUNK[@]} -gt 0 ]; then
+            CHUNK_STR=$(printf '"%s",' "${CHUNK[@]}")
+            ALL_CHUNKS+=("[${CHUNK_STR%,}]")
+          fi
+          
+          # 3. Convert all chunks into a valid minified JSON array wrapper
+          # Example output format: [["packages/a","packages/b"],["packages/c"]]
+          JSON_OUTPUT=$(printf '%s,' "${ALL_CHUNKS[@]}")
+          JSON_OUTPUT="[${JSON_OUTPUT%,}]"
+          
+          echo "Generated JSON chunks: $JSON_OUTPUT"
+          
+          # 4. Safely pipe the JSON output to the GitHub Output environment
+          echo "chunks=$JSON_OUTPUT" >> "$GITHUB_OUTPUT"
+
+  # Job 2: Process the generated chunks using a dynamic matrix strategy
+  process-chunks:
+    needs: setup-chunks
+    runs-on: ubuntu-latest
+    strategy:
+      # Limit execution to a maximum of 16 concurrent workers
+      max-parallel: 16
+      # Don't cancel all other matrix runs if one fails
+      fail-fast: false 
+      matrix:
+        # Pass the dynamic JSON output array from the setup job
+        chunk: ${{ fromJson(needs: setup-chunks.outputs.matrix-chunks) }}
+        
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Process Files in Chunk
+        shell: bash
+        run: |
+          echo "Processing the following batch of files/directories:"
+          
+          # Convert the JSON array chunk back to a shell loop
+          # GitHub Actions injects the matrix value as a string representation of the inner array
+          for file_path in ${{ join(matrix.chunk, ' ') }}; do
+            echo "-> Working on: $file_path"
+            
+            # Place your execution logic here (e.g., testing, building, or compiling)
+            # Example: npm run test --prefix "$file_path"
+          done
