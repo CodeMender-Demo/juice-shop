@@ -4,7 +4,7 @@ on:
   workflow_dispatch: 
 
 jobs:
-  prepare-matrix:
+  planning:
     runs-on: ubuntu-22.04
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
@@ -26,8 +26,8 @@ jobs:
           # Wrap inside an object for GitHub Actions matrix compatibility
           echo "matrix={\"include\": $CHUNKS}" >> "$GITHUB_OUTPUT"
 
-  process-chunk:
-    needs: prepare-matrix
+  scan:
+    needs: planning
     runs-on: ubuntu-22.04
     permissions:
       contents: write
@@ -35,9 +35,9 @@ jobs:
       id-token: write
       security-events: write
     strategy:
-      max-parallel: 16
+      max-parallel: 25
       fail-fast: false
-      matrix: ${{ fromJSON(needs.prepare-matrix.outputs.matrix) }}
+      matrix: ${{ fromJSON(needs.planning.outputs.matrix) }}
     name: "Chunk: ${{ matrix.path }} (${{ matrix.type }}, ${{ matrix.count }} files)"
     steps:
       - name: Checkout Target Repository
@@ -154,87 +154,6 @@ jobs:
           cm find ./${{ matrix.path }}
           # Write a json report
           cm report --format json > codemender_report.json
-      # - name: Verify Exploitability and Generate Remediation PRs
-      #   env:
-      #     GH_TOKEN: ${{ github.token }}
-      #   run: |
-      #     # Change to matrix.path directory
-      #     cd ${{ matrix.path }}
-      #     # Filter for OPEN High and Critical vulnerabilities
-      #     cm report --format=json --status=OPEN \
-      #       | jq '[.[] | select(.severity | ascii_upcase | IN("CRITICAL", "HIGH"))]' \
-      #       > high_priority.json
-      #     COUNT=$(jq length high_priority.json)
-      #     echo "Identified $COUNT high/critical finding(s)." >> $GITHUB_STEP_SUMMARY
-      #     if [ "$COUNT" -eq 0 ]; then
-      #       echo "✅ No critical or high vulnerabilities detected." >> $GITHUB_STEP_SUMMARY
-      #       exit 0
-      #     fi
-      #     # Process top findings: verify with PoC, then fix
-      #     jq -r '.[] | [.finding_id, .title] | @tsv' high_priority.json | while IFS=$'\t' read -r id title; do
-      #       echo "::group::Analyzing Finding $id: $title"
-      #       # 1. Run Verification (Agent generates & runs PoC)
-      #       cm verify "$id" -y --bypass-warning || true
-  
-      #       # 2. Query the updated finding status
-      #       FINDING_STATE=$(cm report "$id" --format=json | jq -r '.[0].status // empty')
-        
-      #       echo "Post-verification status: $FINDING_STATE"
-  
-      #       # 3. Branch based on verification outcome
-      #       if [ "$FINDING_STATE" != "VERIFIED" ]; then
-      #         # ------------------------------------------------------
-      #         # SCENARIO A: Vulnerability is NOT exploitable
-      #         # ------------------------------------------------------
-      #         echo "### 🛡️ False Positive Filtered: $title" >> $GITHUB_STEP_SUMMARY
-      #         echo "- **Finding ID**: \`$id\`" >> $GITHUB_STEP_SUMMARY
-      #         echo "- **Result**: Determined **non-exploitable** by PoC analysis." >> $GITHUB_STEP_SUMMARY
-      #         echo "- **Action**: Automatically marked as \`DISMISSED\`. No code modifications required." >> $GITHUB_STEP_SUMMARY
-      #         echo "::notice title=CodeMender Triage::Finding $id was determined not exploitable and dismissed."
-      
-      #       elif [ "$FINDING_STATE" = "VERIFIED" ]; then
-      #         # ------------------------------------------------------
-      #         # SCENARIO B: Vulnerability is CONFIRMED exploitable
-      #         # ------------------------------------------------------
-      #         echo "### ⚠️ Confirmed Exploitable: $title" >> $GITHUB_STEP_SUMMARY
-      #         echo "- **Finding ID**: \`$id\`" >> $GITHUB_STEP_SUMMARY
-      #         echo "- **Result**: Active PoC exploit succeeded." >> $GITHUB_STEP_SUMMARY
-      #         echo "- **Action**: Proceeding to automated remediation..." >> $GITHUB_STEP_SUMMARY
-      
-      #         # 4. FIX: Only attempt remediation for confirmed vulnerabilities
-      #         if cm fix "$id" -y --bypass-warning && ! git diff --quiet; then
-      #           # Check Finding Status
-      #           FINDING_STATE=$(cm report "$id" --format=json | jq -r '.[0].status // empty')
-      #           if [ "$FINDING_STATE" != "FIXED" ]; then
-      #             # ------------------------------------------------------
-      #             # SCENARIO A: Vulnerability is NOT fixed
-      #             # ------------------------------------------------------
-      #             echo "⚠️ Fix could not be automatically applied." >> $GITHUB_STEP_SUMMARY
-      #           else
-      #             echo "Post-fix attempt status: $FINDING_STATE"
-      #             BRANCH_NAME="codemender/fix-$id"
-      #             git checkout -b "$BRANCH_NAME"
-      #             git commit -am "fix(security): remediate verified $title ($id)"
-      #             git push origin "$BRANCH_NAME" --force
-        
-      #             gh pr create \
-      #               --title "🔒 Security Fix: $title" \
-      #               --body "CodeMender verified this vulnerability with an active PoC exploit and produced this patch." \
-      #               --base main \
-      #               --head "$BRANCH_NAME" || true
-      #             git checkout main
-      #             echo "- **Patch Status**: ✅ Fix generated, verified against PoC, and PR opened." >> $GITHUB_STEP_SUMMARY
-      #           fi
-      #         else
-      #           echo "- **Patch Status**: ⚠️ Fix could not be automatically applied." >> $GITHUB_STEP_SUMMARY
-      #         fi
-      
-      #       else
-      #         echo "Finding $id is in unexpected state: $FINDING_STATE"
-      #       fi
-      
-      #       echo "::endgroup::"
-      #     done
 
       - name: Export Report Artifacts
         if: always()
@@ -242,16 +161,6 @@ jobs:
           cm report -f html > codemender-audit.html
           cm report -f md > codemender-audit.md
           cm report -f json > codemender_report.json
-
-      # - name: Upload Audit Reports
-      #   if: always()
-      #   uses: actions/upload-artifact@v4
-      #   with:
-      #     name: codemender-nightly-reports
-      #     path: |
-      #       codemender-audit.html
-      #       codemender-audit.md
-      #       codemender_report.json
       
       # Attach the chunk identifier so the aggregator can key it by path
       - name: Format Chunk Output
@@ -438,7 +347,7 @@ jobs:
           rm -f gha-creds-*.json
   
   aggregate-results:
-    needs: process-chunk
+    needs: scan
     if: always()
     runs-on: ubuntu-22.04
     steps:
