@@ -234,7 +234,19 @@ jobs:
       - name: Find
         run: |
           echo "Scanning directory: ${{ matrix.path }}"
-          cm find ./${{ matrix.path }}
+          
+          # Parse the matrix.files array to json and get the length using jq
+          FILE_COUNT=$(echo '${{ toJSON(matrix.files) }}' | jq '. | length')
+          
+          if [ "$FILE_COUNT" -gt 20 ]; then
+            echo "Chunk contains more than 20 files ($FILE_COUNT). Running deep scan..."
+            cm find ./${{ matrix.path }} --deep --deep-workers 4
+            
+          else
+            echo "Chunk contains $FILE_COUNT files. RUnning default scan..."
+            cm find ./${{ matrix.path }}
+          fi
+          
           # Write a json report
           cm report --format json > codemender_report.json
       
