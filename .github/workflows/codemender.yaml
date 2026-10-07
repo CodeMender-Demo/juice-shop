@@ -1,4 +1,4 @@
-name: Dynamic Monorepo Splitter
+name: CodeMender Monorepo Scan
 
 on:
   workflow_dispatch: 
@@ -67,19 +67,6 @@ jobs:
           chmod +x cm
           sudo mv cm /usr/local/bin/cm
           cm init
-
-      # Configure Git Identity for the Bot
-      - name: Configure Git Identity
-        run: |
-          git config --global user.name "CodeMender Scan Bot"
-          git config --global user.email "codemender-bot@google.com"
-
-      # Move the credentials file out of the workspace to protect it from git clean
-      - name: Protect Credentials File
-        run: |
-          mv $GOOGLE_APPLICATION_CREDENTIALS ${{ runner.temp }}/gha-creds.json
-          echo "GOOGLE_APPLICATION_CREDENTIALS=${{ runner.temp }}/gha-creds.json" >> $GITHUB_ENV
-          echo "$GOOGLE_APPLICATION_CREDENTIALS"
       
       - name: Update config.yaml with file types
         shell: python
@@ -148,33 +135,106 @@ jobs:
         run: |
           cat ~/.codemender/config.yaml
       
-      - name: Resolve Scan Target
-        id: target
-        run: |
-          if [ "${{ matrix.has_subdirectories }}" = "true" ]; then
-            echo "Chunk has subdirectories. Staging into temporary folder..."
+      # - name: Resolve Scan Target
+      #   id: target
+      #   run: |
+      #     if [ "${{ matrix.has_subdirectories }}" = "true" ]; then
+      #       echo "Chunk has subdirectories. Staging into temporary folder..."
             
-            python3 -c '
-          import os, json, pathlib
-          files = json.loads("""${{ toJSON(matrix.files) }}""")
-          stage_dir = pathlib.Path("chunk_stage")
+      #       python3 -c '
+      #     import os, json, pathlib
+      #     files = json.loads("""${{ toJSON(matrix.files) }}""")
+      #     stage_dir = pathlib.Path("chunk_stage")
           
-          for file_path in files:
-              dest = stage_dir / file_path
-              dest.parent.mkdir(parents=True, exist_ok=True)
-              os.link(file_path, dest)
-          '
+      #     for file_path in files:
+      #         dest = stage_dir / file_path
+      #         dest.parent.mkdir(parents=True, exist_ok=True)
+      #         os.link(file_path, dest)
+      #     '
 
-            echo "scan_dir=chunk_stage" >> "$GITHUB_OUTPUT"
-          else
-            echo "Chunk is a leaf folder with no subdirectories. Scanning in-place..."
-            echo "scan_dir=${{ matrix.path }}" >> "$GITHUB_OUTPUT"
-          fi   
+      #       echo "scan_dir=chunk_stage" >> "$GITHUB_OUTPUT"
+      #     else
+      #       echo "Chunk is a leaf folder with no subdirectories. Scanning in-place..."
+      #       echo "scan_dir=${{ matrix.path }}" >> "$GITHUB_OUTPUT"
+      #     fi   
+      
+      - name: Generate Dynamic .cm_ignore for Chunk
+        shell: python
+        run: |
+          import os, json, subprocess
+          from collections import defaultdict
+          from pathlib import PurePosixPath
+
+          # 1. Load files assigned to this chunk
+          allowed_files = set(json.loads('''${{ toJSON(matrix.files) }}'''))
+
+          # 2. Get all tracked files in git to know what else exists
+          res = subprocess.run(["git", "ls-files"], stdout=subprocess.PIPE, text=True, check=True)
+          all_files = [f.strip() for f in res.stdout.splitlines() if f.strip()]
+
+          # 3. Map total allowed files present under every directory
+          allowed_counts = defaultdict(int)
+          total_counts = defaultdict(int)
+          subdirs = defaultdict(set)
+          direct_files = defaultdict(list)
+
+          for f in all_files:
+              parts = PurePosixPath(f).parts
+              parent = str(PurePosixPath(*parts[:-1])) if len(parts) > 1 else "."
+              direct_files[parent].append(f)
+
+              is_allowed = f in allowed_files
+              for i in range(len(parts)):
+                  ancestor = str(PurePosixPath(*parts[:i])) if i > 0 else "."
+                  total_counts[ancestor] += 1
+                  if is_allowed:
+                      allowed_counts[ancestor] += 1
+                  if i > 0:
+                      p = str(PurePosixPath(*parts[: i - 1])) if i > 1 else "."
+                      subdirs[p].add(ancestor)
+
+          # 4. Hierarchical ignore generator
+          ignore_rules = []
+
+          def generate_ignores(curr_dir: str):
+              # If directory has 0 allowed files, ignore the entire directory
+              if allowed_counts[curr_dir] == 0:
+                  if curr_dir != ".":
+                      ignore_rules.append(f"{curr_dir}/")
+                  else:
+                      ignore_rules.append("/*")
+                  return
+
+              # If all files under this directory are allowed, ignore nothing under it
+              if allowed_counts[curr_dir] == total_counts[curr_dir]:
+                  return
+
+              # Otherwise, it's a mix: recurse into subdirectories
+              for child in sorted(subdirs.get(curr_dir, [])):
+                  generate_ignores(child)
+
+              # And ignore loose files in curr_dir that aren't allowed
+              for f in direct_files.get(curr_dir, []):
+                  if f not in allowed_files:
+                      ignore_rules.append(f)
+
+          generate_ignores(".")
+
+          with open(os.path.join(${{ matrix.path }}, ".cm_ignore"), "w") as f:
+              f.write(existing_content)
+              f.write("\n# --- Dynamically Generated for Chunk ---\n")
+              f.write("\n".join(ignore_rules) + "\n")
+
+          print(f"Generated {len(ignore_rules)} ignore rules in .cm_ignore.")
+
+      - name: Inspect .cm_ignore (Debug)
+        run: |
+          head -n 20 .cm_ignore
       
       - name: Find
         run: |
-          echo "Scanning directory: ${{ steps.target.outputs.scan_dir }}"
-          cm find ./${{ steps.target.outputs.scan_dir }}
+          echo "Scanning directory: ${{ matrix.path }}"
+          cm find ./${{ matrix.path }}
           # Write a json report
           cm report --format json > codemender_report.json
       
