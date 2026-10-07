@@ -35,7 +35,7 @@ jobs:
       id-token: write
       security-events: write
     strategy:
-      max-parallel: 3
+      max-parallel: 16
       fail-fast: false
       matrix: ${{ fromJSON(needs.prepare-matrix.outputs.matrix) }}
     name: "Chunk: ${{ matrix.path }} (${{ matrix.type }}, ${{ matrix.count }} files)"
@@ -50,9 +50,9 @@ jobs:
           workload_identity_provider: "${{ secrets.WIF_PROVIDER }}"
           service_account: "${{ secrets.WIF_SERVICE_ACCOUNT }}"
 
-      # Set up the gcloud CLI
-      - name: Set up Google Cloud SDK
-        uses: google-github-actions/setup-gcloud@v2
+      # # Set up the gcloud CLI
+      # - name: Set up Google Cloud SDK
+      #   uses: google-github-actions/setup-gcloud@v2
 
       # Download and Install CodeMender On-The-Fly
       - name: Install CodeMender CLI
