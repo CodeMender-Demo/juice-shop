@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   planning:
-    uses: Codemender-Demo/central-governance/.github/workflows/codemender.yml@main
+    uses: Codemender-Demo/central-governance/.github/workflows/codemender-deep-scan-sharded.yml@main
     secrets:
       wif_provider: ${{ secrets.WIF_PROVIDER }}
       wif_service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
